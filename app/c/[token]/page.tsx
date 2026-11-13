@@ -1,9 +1,19 @@
 
 "use client";
 
-import { use, useCallback, useEffect, useState } from "react";
+import {
+  Suspense,
+  use,
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
 import { supabase } from "@/lib/supabase";
-import { CheckCircle2, TicketPercent, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  TicketPercent,
+  XCircle,
+} from "lucide-react";
 
 type Cupon = {
   serie: string;
@@ -11,7 +21,14 @@ type Cupon = {
   estado: string;
 };
 
-export default function PaginaCupon({
+type ResultadoCanje = {
+  serie: string;
+  descuento: number;
+  importe_descuento: number;
+  total_pagar: number;
+};
+
+function ContenidoCupon({
   params,
 }: {
   params: Promise<{ token: string }>;
@@ -31,20 +48,22 @@ export default function PaginaCupon({
   const [resultado, setResultado] = useState("");
 
   const consultar = useCallback(async () => {
-    const { data, error } = await supabase.rpc(
-      "irish_consultar_cupon",
-      { p_token: token }
-    );
+    setCargando(true);
 
-    setCupon(data?.[0] ?? null);
-    setError(error?.message ?? "");
+    const { data, error: errorConsulta } =
+      await supabase.rpc("irish_consultar_cupon", {
+        p_token: token,
+      });
+
+    setCupon((data?.[0] as Cupon | undefined) ?? null);
+    setError(errorConsulta?.message ?? "");
     setCargando(false);
   }, [token]);
 
   useEffect(() => {
     void consultar();
 
-    supabase.auth.getUser().then(({ data }) => {
+    void supabase.auth.getUser().then(({ data }) => {
       setAutenticado(!!data.user);
     });
 
@@ -54,19 +73,25 @@ export default function PaginaCupon({
       }
     );
 
-    return () => data.subscription.unsubscribe();
+    return () => {
+      data.subscription.unsubscribe();
+    };
   }, [consultar]);
 
   async function iniciarSesion() {
     setError("");
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    const { error: errorLogin } =
+      await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-    if (error) setError(error.message);
-    else setPassword("");
+    if (errorLogin) {
+      setError(errorLogin.message);
+    } else {
+      setPassword("");
+    }
   }
 
   async function canjear() {
@@ -86,27 +111,31 @@ export default function PaginaCupon({
     setProcesando(true);
     setError("");
 
-    const { data, error } = await supabase.rpc(
-      "irish_canjear_cupon",
-      {
+    const { data, error: errorCanje } =
+      await supabase.rpc("irish_canjear_cupon", {
         p_token: token,
         p_folio: folio.trim(),
         p_importe: monto,
-      }
-    );
+      });
 
-    if (error) {
-      setError(error.message);
+    if (errorCanje) {
+      setError(errorCanje.message);
       await consultar();
     } else {
-      const registro = data?.[0];
+      const registro = data?.[0] as
+        | ResultadoCanje
+        | undefined;
+
       setResultado(
         registro
           ? `Descuento aplicado: $${Number(
               registro.importe_descuento
+            ).toFixed(2)}. Total a pagar: $${Number(
+              registro.total_pagar
             ).toFixed(2)}`
           : "Cupón canjeado correctamente."
       );
+
       await consultar();
     }
 
@@ -115,6 +144,7 @@ export default function PaginaCupon({
   }
 
   const monto = Number(importe);
+
   const montoValido =
     importe.trim() !== "" &&
     Number.isFinite(monto) &&
@@ -122,15 +152,18 @@ export default function PaginaCupon({
 
   const descuentoCalculado =
     cupon && montoValido
-      ? monto * cupon.descuento / 100
+      ? Math.round(
+          (monto * cupon.descuento) / 100 * 100
+        ) / 100
       : 0;
 
   return (
-    <main className="min-h-screen bg-[#102d23] text-white px-4 py-12">
+    <main className="min-h-screen bg-[#102d23] px-4 py-12 text-white">
       <div className="mx-auto max-w-md rounded-2xl bg-[#183d30] p-7 text-center shadow-xl">
         <h1 className="text-3xl font-bold text-[#e5d3a6]">
           IRISH GARDEN
         </h1>
+
         <p className="text-sm tracking-widest">
           CAFETERÍA BISTRO
         </p>
@@ -141,7 +174,10 @@ export default function PaginaCupon({
           <p>Verificando cupón...</p>
         ) : !cupon ? (
           <div className="space-y-3">
-            <XCircle className="mx-auto text-red-300" size={48} />
+            <XCircle
+              className="mx-auto text-red-300"
+              size={48}
+            />
             <p>Cupón inválido o inexistente</p>
           </div>
         ) : (
@@ -154,11 +190,14 @@ export default function PaginaCupon({
             <p className="mt-5 text-6xl font-bold">
               {cupon.descuento}%
             </p>
+
             <p className="mt-2 text-[#e5d3a6]">
               DE DESCUENTO
             </p>
 
-            <p className="mt-6 text-sm">{cupon.serie}</p>
+            <p className="mt-6 text-sm">
+              {cupon.serie}
+            </p>
 
             <div className="my-6 border-t border-[#466254]" />
 
@@ -168,9 +207,11 @@ export default function PaginaCupon({
                   className="mx-auto text-green-400"
                   size={36}
                 />
+
                 <p className="font-bold text-green-300">
                   CUPÓN DISPONIBLE
                 </p>
+
                 <p className="text-sm">
                   Presenta este cupón en caja.
                 </p>
@@ -181,124 +222,178 @@ export default function PaginaCupon({
                   className="mx-auto text-red-300"
                   size={36}
                 />
+
                 <p className="font-bold text-red-300">
                   CUPÓN NO DISPONIBLE
                 </p>
+
                 <p className="text-sm">
                   Este cupón ya fue utilizado o cancelado.
                 </p>
               </div>
             )}
 
-            {cupon.estado === "disponible" && autenticado && (
-              <div className="mt-8 space-y-3 text-left">
-                <h2 className="text-center font-bold text-[#e5d3a6]">
-                  CANJE DE CUPÓN
-                </h2>
+            {cupon.estado === "disponible" &&
+              autenticado && (
+                <div className="mt-8 space-y-3 text-left">
+                  <h2 className="text-center font-bold text-[#e5d3a6]">
+                    CANJE DE CUPÓN
+                  </h2>
 
-                <input
-                  className="w-full rounded-lg bg-white p-3 text-black"
-                  placeholder="Folio del ticket"
-                  value={folio}
-                  onChange={e => setFolio(e.target.value)}
-                />
+                  <input
+                    className="w-full rounded-lg bg-white p-3 text-black"
+                    placeholder="Folio del ticket"
+                    value={folio}
+                    onChange={(e) =>
+                      setFolio(e.target.value)
+                    }
+                  />
 
-                <input
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  className="w-full rounded-lg bg-white p-3 text-black"
-                  placeholder="Importe de la cuenta"
-                  value={importe}
-                  onChange={e => setImporte(e.target.value)}
-                />
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    className="w-full rounded-lg bg-white p-3 text-black"
+                    placeholder="Importe de la cuenta"
+                    value={importe}
+                    onChange={(e) =>
+                      setImporte(e.target.value)
+                    }
+                  />
 
-                {montoValido && (
-                  <div className="rounded-lg bg-[#102d23] p-4 text-sm">
-                    <p>
-                      Descuento: ${descuentoCalculado.toFixed(2)}
-                    </p>
-                    <p className="mt-2 font-bold">
-                      Total a pagar: $
-                      {(monto - descuentoCalculado).toFixed(2)}
-                    </p>
-                  </div>
-                )}
+                  {montoValido && (
+                    <div className="rounded-lg bg-[#102d23] p-4 text-sm">
+                      <p>
+                        Descuento: $
+                        {descuentoCalculado.toFixed(2)}
+                      </p>
 
-                {!confirmar ? (
-                  <button
-                    disabled={!montoValido || !folio.trim()}
-                    onClick={() => setConfirmar(true)}
-                    className="w-full rounded-lg bg-[#e5d3a6] p-3 font-bold text-[#102d23] disabled:opacity-40"
-                  >
-                    Revisar canje
-                  </button>
-                ) : (
-                  <div className="space-y-3 rounded-lg border border-[#e5d3a6] p-3">
-                    <p className="text-center text-sm">
-                      Confirma que el descuento ya está
-                      aplicado en la venta de Soft Restaurant.
-                    </p>
+                      <p className="mt-2 font-bold">
+                        Total a pagar: $
+                        {(monto - descuentoCalculado).toFixed(
+                          2
+                        )}
+                      </p>
+                    </div>
+                  )}
+
+                  {!confirmar ? (
                     <button
-                      disabled={procesando}
-                      onClick={canjear}
+                      disabled={
+                        !montoValido || !folio.trim()
+                      }
+                      onClick={() =>
+                        setConfirmar(true)
+                      }
                       className="w-full rounded-lg bg-[#e5d3a6] p-3 font-bold text-[#102d23] disabled:opacity-40"
                     >
-                      {procesando
-                        ? "Procesando..."
-                        : "Confirmar canje definitivo"}
+                      Revisar canje
                     </button>
-                    <button
-                      disabled={procesando}
-                      onClick={() => setConfirmar(false)}
-                      className="w-full rounded-lg border p-3"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
+                  ) : (
+                    <div className="space-y-3 rounded-lg border border-[#e5d3a6] p-3">
+                      <p className="text-center text-sm">
+                        Confirma que el descuento ya
+                        está aplicado en la venta de
+                        Soft Restaurant.
+                      </p>
 
-            {cupon.estado === "disponible" && !autenticado && (
-              <div className="mt-8 space-y-3">
-                <p className="text-sm text-[#e5d3a6]">
-                  Acceso para personal de caja
-                </p>
-                <input
-                  type="email"
-                  placeholder="Correo electrónico"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  className="w-full rounded-lg bg-white p-3 text-black"
-                />
-                <input
-                  type="password"
-                  placeholder="Contraseña"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  className="w-full rounded-lg bg-white p-3 text-black"
-                />
-                <button
-                  onClick={iniciarSesion}
-                  className="w-full rounded-lg bg-[#e5d3a6] p-3 font-bold text-[#102d23]"
-                >
-                  Iniciar sesión
-                </button>
-              </div>
-            )}
+                      <button
+                        disabled={procesando}
+                        onClick={canjear}
+                        className="w-full rounded-lg bg-[#e5d3a6] p-3 font-bold text-[#102d23] disabled:opacity-40"
+                      >
+                        {procesando
+                          ? "Procesando..."
+                          : "Confirmar canje definitivo"}
+                      </button>
+
+                      <button
+                        disabled={procesando}
+                        onClick={() =>
+                          setConfirmar(false)
+                        }
+                        className="w-full rounded-lg border p-3"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+            {cupon.estado === "disponible" &&
+              !autenticado && (
+                <div className="mt-8 space-y-3">
+                  <p className="text-sm text-[#e5d3a6]">
+                    Acceso para personal de caja
+                  </p>
+
+                  <input
+                    type="email"
+                    placeholder="Correo electrónico"
+                    value={email}
+                    onChange={(e) =>
+                      setEmail(e.target.value)
+                    }
+                    className="w-full rounded-lg bg-white p-3 text-black"
+                  />
+
+                  <input
+                    type="password"
+                    placeholder="Contraseña"
+                    value={password}
+                    onChange={(e) =>
+                      setPassword(e.target.value)
+                    }
+                    className="w-full rounded-lg bg-white p-3 text-black"
+                  />
+
+                  <button
+                    onClick={iniciarSesion}
+                    className="w-full rounded-lg bg-[#e5d3a6] p-3 font-bold text-[#102d23]"
+                  >
+                    Iniciar sesión
+                  </button>
+                </div>
+              )}
           </>
         )}
 
         {resultado && (
-          <p className="mt-5 text-green-300">{resultado}</p>
+          <p className="mt-5 text-green-300">
+            {resultado}
+          </p>
         )}
+
         {error && (
-          <p role="alert" className="mt-5 text-red-300">
+          <p
+            role="alert"
+            className="mt-5 text-red-300"
+          >
             {error}
           </p>
         )}
       </div>
     </main>
+  );
+}
+
+export default function PaginaCupon({
+  params,
+}: {
+  params: Promise<{ token: string }>;
+}) {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center bg-[#102d23] text-white">
+          <p>
+            Verificando cupón de Irish Garden...
+          </p>
+        </main>
+      }
+    >
+      <ContenidoCupon params={params} />
+    </Suspense>
   );
 }
