@@ -19,6 +19,8 @@ type Cupon = {
   serie: string;
   descuento: number;
   estado: string;
+  tipo_promocion: string;
+  descripcion_promocion: string | null;
 };
 
 type ResultadoCanje = {
@@ -43,6 +45,8 @@ function ContenidoCupon({
   const [password, setPassword] = useState("");
   const [folio, setFolio] = useState("");
   const [importe, setImporte] = useState("");
+  const [precio1, setPrecio1] = useState("");
+  const [precio2, setPrecio2] = useState("");
   const [procesando, setProcesando] = useState(false);
   const [confirmar, setConfirmar] = useState(false);
   const [resultado, setResultado] = useState("");
@@ -78,6 +82,43 @@ function ContenidoCupon({
     };
   }, [consultar]);
 
+  const es2x1 = cupon?.tipo_promocion === "2x1";
+
+  const monto = Number(importe);
+  const p1 = Number(precio1);
+  const p2 = Number(precio2);
+
+  const montoValido =
+    importe.trim() !== "" &&
+    Number.isFinite(monto) &&
+    monto > 0;
+
+  const preciosValidos =
+    precio1.trim() !== "" &&
+    precio2.trim() !== "" &&
+    Number.isFinite(p1) &&
+    Number.isFinite(p2) &&
+    p1 > 0 &&
+    p2 > 0 &&
+    Number.isInteger(p1 * 100) &&
+    Number.isInteger(p2 * 100) &&
+    p1 + p2 <= 9999999999.99;
+
+  const formularioValido = es2x1
+    ? preciosValidos
+    : montoValido;
+
+  const descuentoCalculado =
+    cupon && montoValido && !es2x1
+      ? Math.round(
+          (monto * cupon.descuento) / 100 * 100
+        ) / 100
+      : 0;
+
+  const descuento2x1 = preciosValidos
+    ? Math.min(p1, p2)
+    : 0;
+
   async function iniciarSesion() {
     setError("");
 
@@ -95,42 +136,46 @@ function ContenidoCupon({
   }
 
   async function canjear() {
-    if (procesando || !cupon) return;
-
-    const monto = Number(importe);
-
     if (
+      procesando ||
+      !cupon ||
       !folio.trim() ||
-      !Number.isFinite(monto) ||
-      monto <= 0
+      !formularioValido
     ) {
-      setError("Ingresa un folio y un importe válido.");
       return;
     }
 
     setProcesando(true);
     setError("");
 
-    const { data, error: errorCanje } =
-      await supabase.rpc("irish_canjear_cupon", {
-        p_token: token,
-        p_folio: folio.trim(),
-        p_importe: monto,
-      });
+    const respuesta = es2x1
+      ? await supabase.rpc("irish_canjear_2x1", {
+          p_token: token,
+          p_folio: folio.trim(),
+          p_precio_1: p1,
+          p_precio_2: p2,
+        })
+      : await supabase.rpc("irish_canjear_cupon", {
+          p_token: token,
+          p_folio: folio.trim(),
+          p_importe: monto,
+        });
 
-    if (errorCanje) {
-      setError(errorCanje.message);
+    if (respuesta.error) {
+      setError(respuesta.error.message);
       await consultar();
     } else {
-      const registro = data?.[0] as
+      const registro = respuesta.data?.[0] as
         | ResultadoCanje
         | undefined;
 
       setResultado(
         registro
-          ? `Descuento aplicado: $${Number(
+          ? `Beneficio aplicado: $${Number(
               registro.importe_descuento
-            ).toFixed(2)}. Total a pagar: $${Number(
+            ).toFixed(2)}. Total de ${
+              es2x1 ? "las dos bebidas" : "la cuenta"
+            }: $${Number(
               registro.total_pagar
             ).toFixed(2)}`
           : "Cupón canjeado correctamente."
@@ -142,20 +187,6 @@ function ContenidoCupon({
     setConfirmar(false);
     setProcesando(false);
   }
-
-  const monto = Number(importe);
-
-  const montoValido =
-    importe.trim() !== "" &&
-    Number.isFinite(monto) &&
-    monto > 0;
-
-  const descuentoCalculado =
-    cupon && montoValido
-      ? Math.round(
-          (monto * cupon.descuento) / 100 * 100
-        ) / 100
-      : 0;
 
   return (
     <main className="min-h-screen bg-[#102d23] px-4 py-12 text-white">
@@ -187,13 +218,25 @@ function ContenidoCupon({
               size={48}
             />
 
-            <p className="mt-5 text-6xl font-bold">
-              {cupon.descuento}%
-            </p>
-
-            <p className="mt-2 text-[#e5d3a6]">
-              DE DESCUENTO
-            </p>
+            {es2x1 ? (
+              <>
+                <p className="mt-5 text-6xl font-bold">
+                  2 X 1
+                </p>
+                <p className="mt-3 font-bold uppercase leading-relaxed text-[#e5d3a6]">
+                  EN FRAPPES Y SMOOTHIES CLASICOS
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="mt-5 text-6xl font-bold">
+                  {cupon.descuento}%
+                </p>
+                <p className="mt-2 text-[#e5d3a6]">
+                  DE DESCUENTO
+                </p>
+              </>
+            )}
 
             <p className="mt-6 text-sm">
               {cupon.serie}
@@ -207,11 +250,9 @@ function ContenidoCupon({
                   className="mx-auto text-green-400"
                   size={36}
                 />
-
                 <p className="font-bold text-green-300">
                   CUPÓN DISPONIBLE
                 </p>
-
                 <p className="text-sm">
                   Presenta este cupón en caja.
                 </p>
@@ -222,11 +263,9 @@ function ContenidoCupon({
                   className="mx-auto text-red-300"
                   size={36}
                 />
-
                 <p className="font-bold text-red-300">
                   CUPÓN NO DISPONIBLE
                 </p>
-
                 <p className="text-sm">
                   Este cupón ya fue utilizado o cancelado.
                 </p>
@@ -244,47 +283,98 @@ function ContenidoCupon({
                     className="w-full rounded-lg bg-white p-3 text-black"
                     placeholder="Folio del ticket"
                     value={folio}
-                    onChange={(e) =>
-                      setFolio(e.target.value)
-                    }
+                    onChange={(e) => {
+                      setFolio(e.target.value);
+                      setConfirmar(false);
+                    }}
                   />
 
-                  <input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    className="w-full rounded-lg bg-white p-3 text-black"
-                    placeholder="Importe de la cuenta"
-                    value={importe}
-                    onChange={(e) =>
-                      setImporte(e.target.value)
-                    }
-                  />
-
-                  {montoValido && (
-                    <div className="rounded-lg bg-[#102d23] p-4 text-sm">
-                      <p>
-                        Descuento: $
-                        {descuentoCalculado.toFixed(2)}
+                  {es2x1 ? (
+                    <>
+                      <p className="text-sm text-[#e5d3a6]">
+                        Ingresa los precios de dos frappés
+                        o smoothies clásicos elegibles.
                       </p>
 
-                      <p className="mt-2 font-bold">
-                        Total a pagar: $
-                        {(monto - descuentoCalculado).toFixed(
-                          2
-                        )}
-                      </p>
-                    </div>
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        className="w-full rounded-lg bg-white p-3 text-black"
+                        placeholder="Precio de la primera bebida"
+                        value={precio1}
+                        onChange={(e) => {
+                          setPrecio1(e.target.value);
+                          setConfirmar(false);
+                        }}
+                      />
+
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        className="w-full rounded-lg bg-white p-3 text-black"
+                        placeholder="Precio de la segunda bebida"
+                        value={precio2}
+                        onChange={(e) => {
+                          setPrecio2(e.target.value);
+                          setConfirmar(false);
+                        }}
+                      />
+
+                      {preciosValidos && (
+                        <div className="rounded-lg bg-[#102d23] p-4 text-sm">
+                          <p>
+                            Subtotal de bebidas: $
+                            {(p1 + p2).toFixed(2)}
+                          </p>
+                          <p className="mt-2">
+                            Beneficio 2x1: -$
+                            {descuento2x1.toFixed(2)}
+                          </p>
+                          <p className="mt-2 font-bold">
+                            Total de bebidas: $
+                            {(p1 + p2 - descuento2x1).toFixed(2)}
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        className="w-full rounded-lg bg-white p-3 text-black"
+                        placeholder="Importe de la cuenta"
+                        value={importe}
+                        onChange={(e) => {
+                          setImporte(e.target.value);
+                          setConfirmar(false);
+                        }}
+                      />
+
+                      {montoValido && (
+                        <div className="rounded-lg bg-[#102d23] p-4 text-sm">
+                          <p>
+                            Descuento: $
+                            {descuentoCalculado.toFixed(2)}
+                          </p>
+                          <p className="mt-2 font-bold">
+                            Total a pagar: $
+                            {(monto - descuentoCalculado).toFixed(2)}
+                          </p>
+                        </div>
+                      )}
+                    </>
                   )}
 
                   {!confirmar ? (
                     <button
                       disabled={
-                        !montoValido || !folio.trim()
+                        !formularioValido || !folio.trim()
                       }
-                      onClick={() =>
-                        setConfirmar(true)
-                      }
+                      onClick={() => setConfirmar(true)}
                       className="w-full rounded-lg bg-[#e5d3a6] p-3 font-bold text-[#102d23] disabled:opacity-40"
                     >
                       Revisar canje
@@ -292,9 +382,9 @@ function ContenidoCupon({
                   ) : (
                     <div className="space-y-3 rounded-lg border border-[#e5d3a6] p-3">
                       <p className="text-center text-sm">
-                        Confirma que el descuento ya
-                        está aplicado en la venta de
-                        Soft Restaurant.
+                        Confirma que el beneficio ya está
+                        aplicado en la venta de Soft Restaurant
+                        y que las bebidas cumplen la promoción.
                       </p>
 
                       <button
@@ -309,9 +399,7 @@ function ContenidoCupon({
 
                       <button
                         disabled={procesando}
-                        onClick={() =>
-                          setConfirmar(false)
-                        }
+                        onClick={() => setConfirmar(false)}
                         className="w-full rounded-lg border p-3"
                       >
                         Cancelar
@@ -332,9 +420,7 @@ function ContenidoCupon({
                     type="email"
                     placeholder="Correo electrónico"
                     value={email}
-                    onChange={(e) =>
-                      setEmail(e.target.value)
-                    }
+                    onChange={(e) => setEmail(e.target.value)}
                     className="w-full rounded-lg bg-white p-3 text-black"
                   />
 
@@ -342,9 +428,7 @@ function ContenidoCupon({
                     type="password"
                     placeholder="Contraseña"
                     value={password}
-                    onChange={(e) =>
-                      setPassword(e.target.value)
-                    }
+                    onChange={(e) => setPassword(e.target.value)}
                     className="w-full rounded-lg bg-white p-3 text-black"
                   />
 
@@ -387,9 +471,7 @@ export default function PaginaCupon({
     <Suspense
       fallback={
         <main className="flex min-h-screen items-center justify-center bg-[#102d23] text-white">
-          <p>
-            Verificando cupón de Irish Garden...
-          </p>
+          <p>Verificando cupón de Irish Garden...</p>
         </main>
       }
     >
